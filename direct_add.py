@@ -34,39 +34,38 @@ tf.flags.DEFINE_string('data_dir', '../data_dir', 'Temporary storage')
 tf.flags.DEFINE_string('train_dir', '../train_dir', 'Where model ckpt are saved')
 tf.flags.DEFINE_string('record_dir', '../records', 'Where record files are saved')
 tf.flags.DEFINE_string('image_dir', '../image_save', 'Where image files are saved')
-
+# different methods
 tf.flags.DEFINE_boolean('wm_x_fft', 0, 'directly add x')
 tf.flags.DEFINE_boolean('wm_x_grads', 0, 'watermark is gradients of x')
 tf.flags.DEFINE_boolean('directly_add_x', 0, 'directly add x')
 tf.flags.DEFINE_boolean('x_grads', 1, 'whether to iterate data using x gradients')
+tf.flags.DEFINE_boolean('replace', 0, 'whether to replace part of cgd data')
+
+# select data
 tf.flags.DEFINE_boolean('slt_stb_x', 1, 'whether to select select_stable_x')
-tf.flags.DEFINE_boolean('slt_vnb_x', 1, 'whether to select specific x')
+tf.flags.DEFINE_boolean('slt_vnb_x', 0, 'whether to select specific x')
 tf.flags.DEFINE_boolean('slt_lb', 1, 'whether to select specific target label')
 tf.flags.DEFINE_boolean('nns', 1, 'whether to choose near neighbors as changed data')
 
+# some parameters
 tf.flags.DEFINE_float('epsilon', 100.0, 'watermark_power')
-
 tf.flags.DEFINE_float('water_power', 0.2, 'watermark_power')
 tf.flags.DEFINE_float('cgd_ratio', 0.2, 'changed_dataset_ratio')
+tf.flags.DEFINE_float('changed_area', '0.1', '')
+tf.flags.DEFINE_integer('tgt_lb', 4, 'Target class')
+# file path
 tf.flags.DEFINE_string('P_per_class', '../records/precision_per_class.txt', '../precision_per_class.txt')
 tf.flags.DEFINE_string('P_all_classes', '../records/precision_all_class.txt', '../precision_all_class.txt')
 tf.flags.DEFINE_string('other_preds', '../records/other_data_preds.csv', '../changed_data_label.txt')
 tf.flags.DEFINE_string('other_prd_lbs', '../records/other_data_predicted_lbs.csv', ' ')
 tf.flags.DEFINE_string('distance_file', '../records/distances.csv', '../changed_data_label.txt')
 tf.flags.DEFINE_string('nns_idx_file', '../records/nns_idx.csv', '../changed_data_label.txt')
-
-
+tf.flags.DEFINE_string('vnb_idx_path', '../records/vnb_idx.csv', '../changed_data_label.txt')
 tf.flags.DEFINE_string('changed_data_label', '../records/changed_data_label.txt', '../changed_data_label.txt')
 tf.flags.DEFINE_string('log_file', '../log.log', 'the file path of log file')
 tf.flags.DEFINE_string('success_info', '../success_information.txt', 'the file path of log file')
-
-
-tf.flags.DEFINE_integer('tgt_lb', 4, 'Target class')
 tf.flags.DEFINE_string('image_save_path', '../image_save', 'save images')
-tf.flags.DEFINE_string('labels_changed_data_before', '../records/labels_changed_data_before.txt',
-                       'labels_changed_data_before')
-tf.flags.DEFINE_integer('nb_teachers', 6, 'Number of training steps to run.')
-tf.flags.DEFINE_float('changed_area', '0.1', '')
+
 
 FLAGS = tf.flags.FLAGS
 
@@ -84,7 +83,6 @@ def dividing_line():  # 5个文件。
     """insert dividing_line in the following files which save some useful data."""
     file_path_list = [FLAGS.P_per_class,
                       FLAGS.P_all_classes,
-                      FLAGS.labels_changed_data_before,
                       FLAGS.log_file]
 
     for i in file_path_list:
@@ -141,7 +139,7 @@ def start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_fin
 
     precision_ts = accuracy(preds_ts, test_labels)  # 算10类的总的正确率
     precision_tr = accuracy(preds_tr, train_labels)
-    logging.info('Acc_tr:{:.3f}   Acc_ts: {.3f}'.format(precision_tr, precision_ts))
+    logging.info('Acc_tr:{:.3f}   Acc_ts: {:.3f}'.format(precision_tr, precision_ts))
 
     return precision_tr, precision_ts, ppc_train, ppc_test, preds_tr
 
@@ -217,7 +215,7 @@ def show_result(x, cgd_data, ckpt_final, ckpt_final_new, nb_success, nb_fail, ta
     x_label_before = np.argmax(deep_cnn.softmax_preds(x_4d, ckpt_final))
     x_label_after = np.argmax(deep_cnn.softmax_preds(x_4d, ckpt_final_new))
 
-    if cgd_data:  # changed data exist
+    if cgd_data is not None:  # changed data exist
         changed_labels_after = np.argmax(deep_cnn.softmax_preds(cgd_data, ckpt_final_new), axis=1)
         changed_labels_before = np.argmax(deep_cnn.softmax_preds(cgd_data, ckpt_final), axis=1)
 
@@ -295,66 +293,46 @@ def get_nns(x_o, other_data, other_labels, ckpt_final):
         ordered_labels: its labels 
         nns_idx: index of ordered_data, useful to get the unwhitening data later.
     """
-    print('other_labels.shape:',other_labels.shape)
+    logging.info('Start find the neighbors of and the idx of sorted neighbors of x')
 
     x = copy.deepcopy(x_o)
     if len(x.shape) == 3:
         x = np.expand_dims(x, axis=0)
     x_preds = deep_cnn.softmax_preds(x, ckpt_final)  # compute preds, deep_cnn.softmax_preds could be fed  one data now
     other_data_preds = deep_cnn.softmax_preds(other_data, ckpt_final)
-    with open(FLAGS.other_preds, 'w') as f:
-        f_csv = csv.writer(f)
-        f_csv.writerow(['other preds'])
-        f_csv.writerows(other_data_preds)
-
-    print('other_labels.shape:',other_labels.shape)
-    cmp_lbs = np.vstack((np.argmax(other_data_preds, axis=1),other_labels)).transpose()
-    logging.info('cmp_lbs.shape: {}'.format(cmp_lbs.shape))
-    with open(FLAGS.other_prd_lbs, 'w') as f:
-        f_csv = csv.writer(f)
-        f_csv.writerow(['pred_lbs','real_lbs'])
-        f_csv.writerows(cmp_lbs)
 
     distances = np.zeros(len(other_data_preds))
-
     for j in range(len(other_data)):
         tem = x_preds - other_data_preds[j]
         # use which distance?!! here use L2 norm firstly
         distances[j] = np.linalg.norm(tem)
-    more_cmp = np.hstack((other_data_preds, distances.reshape((-1, 1))))
-    most_cmp = np.hstack((more_cmp, cmp_lbs))
 
-    with open(FLAGS.distance_file, 'w') as f:
-        f_csv = csv.writer(f)
-        f_csv.writerow(['preds','distances', 'pred_lbs','real_lbs'])
-        f_csv.writerows(most_cmp[:5000])
+    most_cmp = np.hstack((other_data_preds,
+                          distances.reshape((-1, 1)),
+                          np.argmax(other_data_preds, axis=1).reshape((-1, 1)),
+                          other_labels.reshape((-1, 1))))
+
+    # with open(FLAGS.distance_file, 'w') as f:
+    #     f_csv = csv.writer(f)
+    #     f_csv.writerow(['preds','distances', 'pred_lbs','real_lbs'])
+    #     f_csv.writerows(most_cmp)
 
     # sort wrt distances (from small to large)
     nns_idx = np.argsort(distances)
-    with open(FLAGS.nns_idx_file, 'w') as f:
-        f_csv = csv.writer(f)
-        f_csv.writerow(['sorted_idx'])
-        f_csv.writerow(nns_idx[:1000].reshape(-1,1))
+    # with open(FLAGS.nns_idx_file, 'w') as f:
+    #     f_csv = csv.writer(f)
+    #     f_csv.writerow(['sorted_idx'])
+    #     f_csv.writerow(nns_idx[:1000].reshape(-1,1))
 
     nns_data = other_data[nns_idx]
     nns_lbs = other_labels[nns_idx]
-    print('other_labels.shape:',nns_lbs.shape)
 
     # get the most common label in ordered_labels
     # output the most common 1, shape like: [(0, 6)] first is label, second is times
-
-    #print('neighbors:\n %s' % Counter(nns_lbs).most_common())
-    print('neighbors:\n')
-    print(nns_lbs[:1000].shape)
-
+    print('neighbors:')
     ct = Counter(nns_lbs[:1000]).most_common(10)
-
     print(ct)
-    # =============================================================================
-    #     for i in range(nns_idx):
-    #         deep_cnn.save_fig(other_data[i], FLAGS.img_dir + FLAGS.dataset + '')
-    #
-    # =============================================================================
+
     return nns_data, nns_lbs, nns_idx
 
 
@@ -380,6 +358,7 @@ def get_cgd(train_data, train_labels, x, ckpt_final):
     other_lbs = train_labels[cgd_idx]
 
     if FLAGS.nns:  # resort other_data if sml is True
+        logging.info('Changed data is sorted by near neighbors')
         other_data, other_lbs, nns_idx = get_nns(x, other_data, other_lbs, ckpt_final)
 
     # get part of data need to be changed.
@@ -390,12 +369,12 @@ def get_cgd(train_data, train_labels, x, ckpt_final):
     return train_data_cp, cgd_data, cgd_lbs
 
 
-def tr_data_wm(train_data, train_labels, x, ckpt_final, sml=False):
+def tr_data_wm(train_data, train_labels, x_ori, ckpt_final, sml=False):
     """get the train_data by watermark.
     Args:
         train_data: train data 
         train_labels: train labels.
-        x: what to add to training data, 3 dimentions
+        x_ori: what to add to training data, 3 dimentions
         sml: dose similar order?
         ckpt_final: where does model save.
     Returns:
@@ -404,9 +383,8 @@ def tr_data_wm(train_data, train_labels, x, ckpt_final, sml=False):
     """
     logging.info('Preparing watermark data ....please wait...')
     train_data_cp = copy.deepcopy(train_data)
-    tr_min = train_data_cp.min()
-    tr_max = train_data_cp.max()
-    wm = x * FLAGS.water_power
+    x = copy.deepcopy(x_ori)
+
     #  wm[:,:16,:] = 0
     #  wm[:,20:,:] = 0
 
@@ -424,16 +402,37 @@ def tr_data_wm(train_data, train_labels, x, ckpt_final, sml=False):
     # only remain part of cgd_data
     cgd_idx = cgd_idx[0: int(len(cgd_idx) * FLAGS.cgd_ratio)]
     logging.info('the number of changed data:{}'.format(len(cgd_idx)))
-
     cgd_data = cgd_data[cgd_idx]
-    cgd_data *= (1 - FLAGS.water_power)
-    cgd_data = [g + wm for g in train_data_cp]
-    cgd_data = np.clip(cgd_data, tr_min, tr_max)
 
-    # =============================================================================
-    #     for i in range(len(changed_data)):
-    #         deep_cnn.save_fig(i, FLAGS.image_dir + '/changed_data/'+str(i))
-    # =============================================================================
+    if FLAGS.replace:
+        logging.info('Now replace part of cgd data!')
+        r = 5
+        w1 = int(cgd_data.shape[1] / 2 - r)
+        w2 = int(cgd_data.shape[1] / 2 + r)
+        h1 = int(cgd_data.shape[2] / 2 - r)
+        h2 = int(cgd_data.shape[2] / 2 + r)
+
+        mask_cgd = np.ones(cgd_data.shape)
+        mask_cgd[:, w1: w2, h1: h2, :] = 0
+        cgd_data *= mask_cgd
+        for i in range(5):
+            deep_cnn.save_fig(cgd_data[i].astype(np.int32), '../cgd_data_ori'+str(i)+'.png')
+
+        mask_x = np.zeros(cgd_data.shape[1:])
+        mask_x[w1: w2, h1: h2, :] = 1
+        x *= mask_x
+
+        cgd_data = [g + x for g in cgd_data]
+        for i in range(5):
+            deep_cnn.save_fig(cgd_data[i].astype(np.int32), '../cgd_data'+str(i)+'.png')
+        deep_cnn.save_fig(x.astype(np.int32), '../x.png')
+    else:
+        wm = x * FLAGS.water_power
+        cgd_data *= (1 - FLAGS.water_power)
+        cgd_data = [g + wm for g in cgd_data]
+    # for i in range(10):
+    #     img_dir = FLAGS.image_dir + '/changed_data/' +
+    #     deep_cnn.save_fig(i, FLAGS.image_dir + '/changed_data/'+str(i))
 
     return train_data_cp, cgd_data
 
@@ -604,7 +603,8 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
                 # deep_cnn.save_hotfig(x_grads_cp_batch[i], '../x_grads_cp_batch_old/'+str(i)+'.png')
                 # deep_cnn.save_hotfig(batch_grads_cp[i], '../batch_grads_cp_old/'+str(i)+'.png')
 
-                x_grads_cp_batch[i][(x_grads_cp_batch[i] * batch_grads_cp[i]) < 0] = 0
+                #x_grads_cp_batch[i][(x_grads_cp_batch[i] * batch_grads_cp[i]) < 0] = 0
+                pass
 
                 # deep_cnn.save_hotfig(batch_grads_cp[i], '../batch_grads_cp/'+str(i)+'.png')
                 # deep_cnn.save_hotfig(x_grads_cp_batch[i], '../x_grads_cp_batch/'+str(i)+'.png')
@@ -661,6 +661,7 @@ def find_vnb_label(train_data, train_labels, x, x_label, ckpt_final, saved_nb=10
         times: frequency of target class accurs
 
     """
+    logging.info('Start find vulnerable label for idx:{} of train data'.format(idx))
     train_data_cp = copy.deepcopy(train_data)
 
     changed_index = []
@@ -678,7 +679,7 @@ def find_vnb_label(train_data, train_labels, x, x_label, ckpt_final, saved_nb=10
     (target_class, times) = Counter(ordered_labels[:saved_nb]).most_common(1)[0]
     if sv_img:
         if idx==22222:
-            print('Please provide idx of data in order to save it.')
+            logging.info('Please provide idx of data in order to save it.')
             sys.exit(1)
         for i in range(10):
             logging.info('Saving first 10 neighbors of x, please wait ...')
@@ -697,7 +698,7 @@ def find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt
     if os.path.exists(stb_idx_file):
         stable_idx = np.loadtxt(stb_idx_file)
         stable_idx = stable_idx.astype(np.int32)
-        logging.info(stb_idx_file + "already exist! Index of stable x have been restored at this file.")
+        logging.info(stb_idx_file + " already exist! Index of stable x have been restored at this file.")
 
     else:
         logging.info(stb_idx_file + "does not exist! Index of stable x will be generated by retraing data 10 times...")
@@ -727,23 +728,47 @@ def find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt
 def find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, ckpt_final):
     """select vulnerable x.
     Args:
-
-    
+        index: the index of train_data
+        train_data: the original whole train data
+        train_labels: the original whole trian labels
+        test_data: test data
+        test_labels: test labels
+        ckpt: ckpt path
+        ckpt_final: final ckpt path
+    Returns:
+        new_idx: new idx sorted according to the vulnerability of data(more neighbors in same class, more vulnerable )
     """
-    matrix = np.zeros((len(index), 3))
-    count = 0
-    for idx in index:
-        x = test_data[idx]
-        target_class, times = find_vnb_label(train_data, train_labels, x, test_labels[idx], ckpt_final)
+    logging.info('Start select the vulnerable x')
+    if os.path.exists(FLAGS.vnb_idx_path):
+        vnb_idx = np.loadtxt(open(FLAGS.vnb_idx_path, "rb"), delimiter=",", skiprows=1)
 
-        matrix[count] = [idx, target_class, times]
-        logging.info('real label: {}, \ntarget_class: {},  \ntimes: {} '.format(test_labels[idx], target_class, times))
-        with open('../' + str(FLAGS.dataset) + '_neighbors_log_new.txt', 'a+') as f:
-            f.write('idx: {}, real label: {}, target_label: {}, times: {} \n'.format(idx,test_labels[idx],target_class,times))
+        vnb_idx = vnb_idx.astype(np.int32)
+        logging.info(FLAGS.vnb_idx_path + " already exist! Index of vulnerable x have been restored from this file.")
 
-        count += 1
+    else:
+        logging.warn(FLAGS.vnb_idx_path + " does not exist! Index of vulnerable x is generated for a long time ...")
+        matrix = np.zeros((len(index), 4))
+        count = 0
+        for idx in index:
+            x = test_data[idx]
+            target_class, times = find_vnb_label(train_data, train_labels, x, test_labels[idx], ckpt_final, idx=idx)
 
-    return matrix[:, 0]
+            matrix[count] = [idx, test_labels[idx], target_class, times]
+            count += 1
+            logging.info('real label: {}, \ntarget_class: {},  \ntimes: {} '.format(test_labels[idx], target_class, times))
+
+
+        logging.info('before sort by times, the index is: {}'.format(matrix[:20, 0]))
+        matrix = matrix[matrix[:,-1].argsort()]
+        logging.info('after sort by times, the index is: {}'.format(matrix[:20, 0]))
+
+        with open(FLAGS.vnb_idx_path, 'w') as f:
+            f_csv = csv.writer(f)
+            f_csv.writerow(['vul_idx','real labels', 'target labels','times'])
+            f_csv.writerows(matrix)
+        vnb_idx =  matrix[:, 0]
+
+    return vnb_idx
 
 
 def main(argv=None):  # pylint: disable=unused-argument
@@ -760,8 +785,8 @@ def main(argv=None):  # pylint: disable=unused-argument
 
     train_data, train_labels, test_data, test_labels = my_load_dataset(FLAGS.dataset)
 
-    fist = 0  # 数据没水印之前，要训练一下。然后存一下。知道正确率。（只用训练一次）
-    if fist:
+    first = 0  # 数据没水印之前，要训练一下。然后存一下。知道正确率。（只用训练一次）
+    if first:
         logging.info('Start train original model')
         train_tuple = start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
     else:
@@ -777,9 +802,7 @@ def main(argv=None):  # pylint: disable=unused-argument
 
     # decide which index
     if FLAGS.slt_vnb_x:
-        logging.info('Start select the vulnerable x')
         index = find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
-        logging.info('Finished, the first 20 index of vulnerable x: \n{}'.format(index[:20]))
 
     for idx in index:
 
@@ -886,9 +909,8 @@ def main(argv=None):  # pylint: disable=unused-argument
                                   str(FLAGS.dataset) + '/fft/' + str(idx) + '.png')  # shift to int32 befor save fig
 
             # get new training data
-            new_data_tuple = tr_data_wm(train_data, train_labels, watermark, FLAGS.tgt_lb, ckpt_final, sml=True,
-                                        cgd_ratio=FLAGS.cgd_ratio, power=FLAGS.water_power)
-            train_data_new, changed_data = new_data_tuple
+            new_data_tuple = tr_data_wm(train_data, train_labels, watermark, ckpt_final, sml=True)
+            train_data_new, cgd_data = new_data_tuple
             # train with new data
 
             # save 10 watermark images
