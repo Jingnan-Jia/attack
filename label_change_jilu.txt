@@ -1,0 +1,15 @@
+
+-------cifar10
+--water_power: 0.2
+--cgd_ratio: 0.2
+--simi: 1
+--sort: 0
+--block_flag: 0
+------
+-------cifar10
+--water_power: 0.2
+--cgd_ratio: 0.2
+--simi: 1
+--sort: 0
+--block_flag: 0
+------

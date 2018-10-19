@@ -1,0 +1,2 @@
+2018-10-17 17:54:34,883  INFO : Original model will be restored from ../train_dir/cifar10/model.ckpt-11999
+2018-10-17 17:54:34,885  INFO : selecting stable x by retraining 10 times using the same training data.
