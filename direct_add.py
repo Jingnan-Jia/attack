@@ -38,14 +38,14 @@ tf.flags.DEFINE_string('image_dir', '../image_save', 'Where image files are save
 tf.flags.DEFINE_boolean('wm_x_fft', 0, 'directly add x')
 tf.flags.DEFINE_boolean('wm_x_grads', 0, 'watermark is gradients of x')
 tf.flags.DEFINE_boolean('directly_add_x', 0, 'directly add x')
-tf.flags.DEFINE_boolean('x_grads', 1, 'whether to iterate data using x gradients')
+tf.flags.DEFINE_boolean('x_grads', 0, 'whether to iterate data using x gradients')
 tf.flags.DEFINE_boolean('replace', 0, 'whether to replace part of cgd data')
 
 # select data
-tf.flags.DEFINE_boolean('slt_stb_x', 1, 'whether to select select_stable_x')
+tf.flags.DEFINE_boolean('slt_stb_x', 0, 'whether to select select_stable_x')
 tf.flags.DEFINE_boolean('slt_vnb_x', 0, 'whether to select specific x')
-tf.flags.DEFINE_boolean('slt_lb', 1, 'whether to select specific target label')
-tf.flags.DEFINE_boolean('nns', 1, 'whether to choose near neighbors as changed data')
+tf.flags.DEFINE_boolean('slt_lb', 0, 'whether to select specific target label')
+tf.flags.DEFINE_boolean('nns', 0, 'whether to choose near neighbors as changed data')
 
 # some parameters
 tf.flags.DEFINE_float('epsilon', 100.0, 'watermark_power')
@@ -53,6 +53,7 @@ tf.flags.DEFINE_float('water_power', 0.2, 'watermark_power')
 tf.flags.DEFINE_float('cgd_ratio', 0.2, 'changed_dataset_ratio')
 tf.flags.DEFINE_float('changed_area', '0.1', '')
 tf.flags.DEFINE_integer('tgt_lb', 4, 'Target class')
+
 # file path
 tf.flags.DEFINE_string('P_per_class', '../records/precision_per_class.txt', '../precision_per_class.txt')
 tf.flags.DEFINE_string('P_all_classes', '../records/precision_all_class.txt', '../precision_all_class.txt')
@@ -369,7 +370,7 @@ def get_cgd(train_data, train_labels, x, ckpt_final):
     return train_data_cp, cgd_data, cgd_lbs
 
 
-def tr_data_wm(train_data, train_labels, x_ori, ckpt_final, sml=False):
+def tr_data_wm(train_data, train_labels, x_ori, ckpt_final):
     """get the train_data by watermark.
     Args:
         train_data: train data 
@@ -396,13 +397,15 @@ def tr_data_wm(train_data, train_labels, x_ori, ckpt_final, sml=False):
     cgd_data = train_data_cp[cgd_idx]
     cgd_lbs = train_labels[cgd_idx]
 
-    if sml:
+    if FLAGS.nns:
         cgd_idx = get_nns(x, cgd_data, cgd_lbs, ckpt_final)[-1]
 
-    # only remain part of cgd_data
-    cgd_idx = cgd_idx[0: int(len(cgd_idx) * FLAGS.cgd_ratio)]
-    logging.info('the number of changed data:{}'.format(len(cgd_idx)))
-    cgd_data = cgd_data[cgd_idx]
+        # only remain part of cgd_data
+        cgd_idx = cgd_idx[: int(len(cgd_idx) * FLAGS.cgd_ratio)]
+        cgd_data = cgd_data[cgd_idx]
+    else:
+        cgd_data = cgd_data[: int(len(cgd_data) * FLAGS.cgd_ratio)]
+    logging.info('the number of changed data:{}'.format(len(cgd_data)))
 
     if FLAGS.replace:
         logging.info('Now replace part of cgd data!')
@@ -429,7 +432,7 @@ def tr_data_wm(train_data, train_labels, x_ori, ckpt_final, sml=False):
     else:
         wm = x * FLAGS.water_power
         cgd_data *= (1 - FLAGS.water_power)
-        cgd_data = [g + wm for g in cgd_data]
+        cgd_data = np.array([g + wm for g in cgd_data]) # list to array
     # for i in range(10):
     #     img_dir = FLAGS.image_dir + '/changed_data/' +
     #     deep_cnn.save_fig(i, FLAGS.image_dir + '/changed_data/'+str(i))
@@ -795,7 +798,7 @@ def main(argv=None):  # pylint: disable=unused-argument
     if FLAGS.slt_stb_x:
         logging.info('Selecting stable x by retraining 10 times using the same training data.')
         index = find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
-        logging.info('First 20 index of stable x: \n{}'.format(index[:20]))
+        logging.info('First 20 / {}index of stable x: \n{}'.format(len(index), index[:20]))
     else:
         index = range(len(test_data))
         logging.info('Selecting x in all testing data, First 20 index: \n{}'.format(index[:20]))
@@ -803,7 +806,7 @@ def main(argv=None):  # pylint: disable=unused-argument
     # decide which index
     if FLAGS.slt_vnb_x:
         index = find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
-
+    nb_success, nb_fail = 0, 0
     for idx in index:
 
         logging.info('================current num: {} ================'.format(idx))
@@ -836,8 +839,6 @@ def main(argv=None):  # pylint: disable=unused-argument
         pf_path = ckpt_dir + str(idx) + 'model_perfect.ckpt'
         pf_path_final = pf_path + '-' + str(FLAGS.max_steps - 1)
 
-        nb_success, nb_fail = 0, 0
-        
         #  decide which approach
         if FLAGS.x_grads:  # iterate x's gradients
             logging.info('Start train by change x with gradients.\n')
@@ -907,11 +908,14 @@ def main(argv=None):  # pylint: disable=unused-argument
                 watermark = fft(x, ww=1)
                 deep_cnn.save_fig(watermark.astype(np.int32), FLAGS.image_dir + '/' +
                                   str(FLAGS.dataset) + '/fft/' + str(idx) + '.png')  # shift to int32 befor save fig
+            # save 10 original images
+            for i in range(10):  # shift to int for save fig
+                img = '/'.join((FLAGS.image_dir, FLAGS.dataset, 'changed_data', 'power_' +
+                                str(FLAGS.water_power), 'number' + str(idx), str(i) + '_ori.png'))
+                deep_cnn.save_fig(cgd_data[i].astype(np.int32), img)
 
             # get new training data
-            new_data_tuple = tr_data_wm(train_data, train_labels, watermark, ckpt_final, sml=True)
-            train_data_new, cgd_data = new_data_tuple
-            # train with new data
+            train_data_new, cgd_data = tr_data_wm(train_data, train_labels, watermark, ckpt_final)
 
             # save 10 watermark images
             for i in range(10):  # shift to int for save fig
@@ -933,14 +937,10 @@ def main(argv=None):  # pylint: disable=unused-argument
                 new_ckpt_final = new_ckpt + '-' + str(FLAGS.max_steps - 1)
             logging.info('np.max(train_data) before new train: {}'.format(np.max(train_data)))
 
-            train_tuple = start_train(train_data_new, train_labels, test_data, test_labels,
-                                      new_ckpt, new_ckpt_final)
+            start_train(train_data_new, train_labels, test_data, test_labels, new_ckpt, new_ckpt_final)
 
-            nb_success, nb_fail = show_result(x, cgd_data, ckpt_final,
-                                              new_ckpt_final, nb_success,
-                                              nb_fail, FLAGS.tgt_lb)
-
-    # precision_tr, precision_ts, ppc_train, ppc_test, preds_tr = train_tuple
+            nb_success, nb_fail = show_result(x, cgd_data, ckpt_final, new_ckpt_final,
+                                              nb_success, nb_fail, FLAGS.tgt_lb)
 
     return True
 
