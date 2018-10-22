@@ -38,7 +38,7 @@ tf.flags.DEFINE_string('image_dir', '../image_save', 'Where image files are save
 tf.flags.DEFINE_boolean('wm_x_fft', 0, 'directly add x')
 tf.flags.DEFINE_boolean('wm_x_grads', 0, 'watermark is gradients of x')
 tf.flags.DEFINE_boolean('directly_add_x', 0, 'directly add x')
-tf.flags.DEFINE_boolean('x_grads', 0, 'whether to iterate data using x gradients')
+tf.flags.DEFINE_boolean('x_grads', 1, 'whether to iterate data using x gradients')
 tf.flags.DEFINE_boolean('replace', 0, 'whether to replace part of cgd data')
 
 # select data
@@ -48,7 +48,7 @@ tf.flags.DEFINE_boolean('slt_lb', 0, 'whether to select specific target label')
 tf.flags.DEFINE_boolean('nns', 0, 'whether to choose near neighbors as changed data')
 
 # some parameters
-tf.flags.DEFINE_float('epsilon', 100.0, 'watermark_power')
+tf.flags.DEFINE_float('epsilon', 0.001, 'watermark_power')
 tf.flags.DEFINE_float('water_power', 0.2, 'watermark_power')
 tf.flags.DEFINE_float('cgd_ratio', 0.2, 'changed_dataset_ratio')
 tf.flags.DEFINE_float('changed_area', '0.1', '')
@@ -337,6 +337,8 @@ def get_nns(x_o, other_data, other_labels, ckpt_final):
     return nns_data, nns_lbs, nns_idx
 
 
+
+
 def get_cgd(train_data, train_labels, x, ckpt_final):
     """get the data which need to be changed
     Args:
@@ -351,23 +353,35 @@ def get_cgd(train_data, train_labels, x, ckpt_final):
     """
     train_data_cp = train_data
     #  get data with other labels
-    cgd_idx = []
+    tgt_idx = []
+    kpt_idx = []
     for j in range(len(train_data)):
         if train_labels[j] == FLAGS.tgt_lb:
-            cgd_idx.append(j)
-    other_data = train_data_cp[cgd_idx]
-    other_lbs = train_labels[cgd_idx]
+            tgt_idx.append(j)
+        else:
+            kpt_idx.append(j)
+    tgt_data_all = copy.deepcopy(train_data_cp[tgt_idx])
+    kpt_data = copy.deepcopy(train_data_cp[kpt_idx])
+    tgt_lbs_all = copy.deepcopy(train_labels[tgt_idx])
+    kpt_lbs = copy.deepcopy(train_labels[kpt_idx])
 
     if FLAGS.nns:  # resort other_data if sml is True
         logging.info('Changed data is sorted by near neighbors')
-        other_data, other_lbs, nns_idx = get_nns(x, other_data, other_lbs, ckpt_final)
+        tgt_data_all, tgt_lbs_all, nns_idx = get_nns(x, tgt_data_all, tgt_lbs_all, ckpt_final)
 
     # get part of data need to be changed.
-    cgd_data = other_data[:int(len(other_data) * FLAGS.cgd_ratio)]
-    cgd_lbs = other_lbs[:int(len(other_lbs) * FLAGS.cgd_ratio)]
+    cgd_data = tgt_data_all[:int(len(tgt_idx) * FLAGS.cgd_ratio)]
+    kpt_data_in_tgt = tgt_data_all[int(len(tgt_idx) * FLAGS.cgd_ratio):]
+
+    cgd_lbs = tgt_lbs_all[:int(len(tgt_idx) * FLAGS.cgd_ratio)]
+    kpt_lbs_in_tgt = tgt_lbs_all[int(len(tgt_idx) * FLAGS.cgd_ratio):]
+
+    kpt_data_all = np.vstack((kpt_data, kpt_data_in_tgt))
+    kpt_lbs_all = np.hstack((kpt_lbs, kpt_lbs_in_tgt))
+
     logging.info('There are {} changed data '.format(len(cgd_data)))
 
-    return train_data_cp, cgd_data, cgd_lbs
+    return cgd_data, cgd_lbs, kpt_data_all, kpt_lbs_all
 
 
 def tr_data_wm(train_data, train_labels, x_ori, ckpt_final):
@@ -376,7 +390,6 @@ def tr_data_wm(train_data, train_labels, x_ori, ckpt_final):
         train_data: train data 
         train_labels: train labels.
         x_ori: what to add to training data, 3 dimentions
-        sml: dose similar order?
         ckpt_final: where does model save.
     Returns:
         train_data_cp: all training data after add water into some data.
@@ -438,6 +451,49 @@ def tr_data_wm(train_data, train_labels, x_ori, ckpt_final):
     #     deep_cnn.save_fig(i, FLAGS.image_dir + '/changed_data/'+str(i))
 
     return train_data_cp, cgd_data
+
+def wm_cgd_data(x_ori, cgd_data):
+    """get the train_data by watermark.
+    Args:
+        x_ori: original watermark
+        cgd_data: changed data
+    Returns:
+        True
+    """
+    logging.info('Preparing watermark data ....please wait...')
+    x = copy.deepcopy(x_ori)
+
+    if FLAGS.replace:
+        logging.info('Now replace part of cgd data!')
+        r = 5
+        w1 = int(cgd_data.shape[1] / 2 - r)
+        w2 = int(cgd_data.shape[1] / 2 + r)
+        h1 = int(cgd_data.shape[2] / 2 - r)
+        h2 = int(cgd_data.shape[2] / 2 + r)
+
+        mask_cgd = np.ones(cgd_data.shape)
+        mask_cgd[:, w1: w2, h1: h2, :] = 0
+        cgd_data *= mask_cgd
+        for i in range(5):
+            deep_cnn.save_fig(cgd_data[i].astype(np.int32), '../cgd_data_ori'+str(i)+'.png')
+
+        mask_x = np.zeros(cgd_data.shape[1:])
+        mask_x[w1: w2, h1: h2, :] = 1
+        x *= mask_x
+
+        cgd_data = [g + x for g in cgd_data]
+        for i in range(5):
+            deep_cnn.save_fig(cgd_data[i].astype(np.int32), '../cgd_data'+str(i)+'.png')
+        deep_cnn.save_fig(x.astype(np.int32), '../x.png')
+    else:
+        wm = x * FLAGS.water_power
+        cgd_data *= (1 - FLAGS.water_power)
+        for g in cgd_data:
+            g += wm
+    # for i in range(10):
+    #     img_dir = FLAGS.image_dir + '/changed_data/' +
+    #     deep_cnn.save_fig(i, FLAGS.image_dir + '/changed_data/'+str(i))
+    return cgd_data
 
 
 def fft(x, ww=3, ww_o=10):
@@ -544,7 +600,7 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
         each_nb = 0
         for each in cgd_data:
             x_grads_cp = copy.deepcopy(x_grads)  # every time x_grads_cp is a still x_grads
-            logging.info('\n---start change data of number: {} / {}---'.format((each_nb, len(cgd_data))))
+            logging.info('\n---start change data of number: {} / {}---'.format(each_nb, len(cgd_data)))
             each_grads = deep_cnn.gradients(each, ckpt_final, idx, FLAGS.tgt_lb, new=False)[0]
             each_grads_cp = copy.deepcopy(each_grads)
             # in x_grads,set a pixel to 0 if its sign is different whith pexel in each_grads
@@ -570,6 +626,14 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
                     idx) + '/' + str(itr) + '/' + str(each_nb) + '_ori.png'
                 deep_cnn.save_fig(each.astype(np.int32), img_dir_ori)
 
+            # compute delta_x
+            preds_x = deep_cnn.softmax_preds(x_4d, ckpt_final)
+            print('preds_x.shape',preds_x.shape)
+            preds_batch = deep_cnn.softmax_preds(batch, ckpt_final)
+            print('preds_batch.shape',preds_batch.shape)
+            delta_x = np.linalg.norm(preds_batch - preds_x) / batch_grads
+            print('delta_x.shape',delta_x.shape)
+
             # iterate each changed data
             each += (x_grads_cp * FLAGS.epsilon)
 
@@ -586,6 +650,7 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
     else:  # iterate changed data batch by batch, pretty fast
 
         batch_nbs = int(np.floor(len(cgd_data) / FLAGS.batch_size))
+        cgd_data_new = np.zeros((1, cgd_data.shape[1], cgd_data.shape[2], cgd_data.shape[3]))
         for batch_nb in range(batch_nbs):
             x_grads_cp = copy.deepcopy(
                 x_grads)  # every time x_grads_cp is a still x_grads, mustnot change this line's position!
@@ -599,7 +664,15 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
             batch_grads = deep_cnn.gradients(batch, ckpt_final, idx, FLAGS.tgt_lb, new=False)[
                 0]  # a batch of gradients
 
-            batch_grads_cp = copy.deepcopy(batch_grads)
+            # compute delta_x
+            x_4d = np.expand_dims(x, axis=0)
+            preds_x = deep_cnn.softmax_preds(x_4d, ckpt_final)
+            print('preds_x.shape',preds_x.shape)
+            preds_batch = deep_cnn.softmax_preds(batch, ckpt_final)
+            print('preds_batch.shape',preds_batch.shape)
+            delta_x = np.linalg.norm(preds_batch - preds_x) / batch_grads
+            print('delta_x.shape',delta_x.shape)
+
             x_grads_cp_batch = np.repeat(np.expand_dims(x_grads_cp, axis=0), len(batch), axis=0)
 
             for i in range(len(batch)):
@@ -614,12 +687,6 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
 
                 # logging.info(x_grads_cp_batch[i])
 
-            # show how may 0 in x_grads
-            batch_grads_flatten = np.reshape(x_grads_cp_batch, (-1,))
-            # logging.info('batch_grads_flatten:',batch_grads_flatten[:100])
-            ct = Counter(batch_grads_flatten)
-            logging.info('there are {} %% pixels not changed in batch {}'.format(
-            np.around(ct[0] / len(batch_grads_flatten) * 100), batch_nb))
 
             batch_pred_lb_b = np.argmax(deep_cnn.softmax_preds(batch, ckpt_final), axis=1)
             logging.info('the predicted label of batch before changing is : {}'.format(batch_pred_lb_b[:20]))
@@ -632,7 +699,7 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
                     deep_cnn.save_fig(batch[i].astype(np.int32), img_dir)
 
             # iterate each changed data
-            batch += (x_grads_cp_batch * FLAGS.epsilon)
+            batch += (delta_x * FLAGS.epsilon)
 
             batch_pred_lb_a = np.argmax(deep_cnn.softmax_preds(batch, ckpt_final), axis=1)
             logging.info('the predicted label of batch after changing is : {}'.format(batch_pred_lb_a[:20]))
@@ -647,7 +714,10 @@ def itr_grads(cgd_data, x, ckpt_final, itr, idx):
                     deep_cnn.save_fig(batch[i].astype(np.int32), img_dir)
 
             batch_nb += 1
-    return True
+
+            cgd_data_new = np.vstack((cgd_data_new, batch))
+        cgd_data_new = cgd_data_new[1:].astype(np.float32)
+    return cgd_data_new
 
 
 def find_vnb_label(train_data, train_labels, x, x_label, ckpt_final, saved_nb=1000, sv_img=False, idx=22222):
@@ -728,7 +798,7 @@ def find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt
     return stable_idx
 
 
-def find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, ckpt_final):
+def find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt_final):
     """select vulnerable x.
     Args:
         index: the index of train_data
@@ -736,14 +806,13 @@ def find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, 
         train_labels: the original whole trian labels
         test_data: test data
         test_labels: test labels
-        ckpt: ckpt path
         ckpt_final: final ckpt path
     Returns:
         new_idx: new idx sorted according to the vulnerability of data(more neighbors in same class, more vulnerable )
     """
     logging.info('Start select the vulnerable x')
     if os.path.exists(FLAGS.vnb_idx_path):
-        vnb_idx = np.loadtxt(open(FLAGS.vnb_idx_path, "rb"), delimiter=",", skiprows=1)
+        vnb_idx = np.loadtxt(open(FLAGS.vnb_idx_path, "r"), delimiter=",", skiprows=1)
 
         vnb_idx = vnb_idx.astype(np.int32)
         logging.info(FLAGS.vnb_idx_path + " already exist! Index of vulnerable x have been restored from this file.")
@@ -831,7 +900,8 @@ def main(argv=None):  # pylint: disable=unused-argument
         logging.info('target label is {}'.format(FLAGS.tgt_lb))
 
         # decide which part of data to be changed
-        train_data_new, cgd_data, cgd_lbs = get_cgd(train_data, train_labels, x, ckpt_final)
+        cgd_data, cgd_lbs, kpt_data_all, kpt_lbs_all = get_cgd(train_data, train_labels, x, ckpt_final)
+
 
         #  save x, and note to shift x to int32 befor save fig
         deep_cnn.save_fig(x.astype(np.int32), '/'.join((FLAGS.image_dir, FLAGS.dataset, 'original', str(idx) + '.png')))
@@ -852,21 +922,40 @@ def main(argv=None):  # pylint: disable=unused-argument
 
                 # this line will iterate data by gradients
                 if itr == 0:
-                    itr_grads(cgd_data, x, ckpt_final, itr, idx)
+                    cgd_data_new = itr_grads(cgd_data, x, ckpt_final, itr, idx)
                 else:
-                    itr_grads(cgd_data, x, new_ckpt_final, itr, idx)
+                    cgd_data_new = itr_grads(cgd_data, x, new_ckpt_final, itr, idx)
 
-                start_train(train_data_new, train_labels, test_data, test_labels, new_ckpt, new_ckpt_final)
+                train_data_new = np.vstack((cgd_data_new, kpt_data_all))
+                train_labels_new = np.hstack((cgd_lbs, kpt_lbs_all))
 
-                nb_success, nb_fail = show_result(x, cgd_data, ckpt_final, new_ckpt_final,
+                # cgd_count, kpt_count = 0, 0
+                # for i in range(len(train_data_new)):
+                #     if (train_data_new[i] == cgd_data_new[0]).all():
+                #         cgd_count += 1
+                #         logging.info('True, this train data is cgd {} / {}'.format(cgd_count, len(train_data_new)))
+                #     else:
+                #         kpt_count += 1
+                #         logging.info('False, this train data is kpt {} / {}'.format(kpt_count, len(train_data_new)))
+
+                np.random.seed(100)
+                np.random.shuffle(train_data_new)
+                np.random.seed(100)
+                np.random.shuffle(train_labels_new)
+
+
+                print(train_data_new.dtype, train_labels_new.dtype)
+                start_train(train_data_new, train_labels_new, test_data, test_labels, new_ckpt, new_ckpt_final)
+
+                nb_success, nb_fail = show_result(x, cgd_data_new, ckpt_final, new_ckpt_final,
                                                   nb_success, nb_fail, FLAGS.tgt_lb)
                 
                 with open('../success_infor.txt', 'a+') as f:
                     f.write('data_idx_%d, iteration_%d' % (idx, itr))
                 if nb_success == 1:
                     logging.info('This data is successful first time, we need to retrain to entrue.')
-                    start_train(train_data_new, train_labels, test_data, test_labels, new_ckpt, new_ckpt_final)
-                    nb_success, nb_fail = show_result(x, cgd_data, ckpt_final, new_ckpt_final,
+                    start_train(train_data_new, train_labels_new, test_data, test_labels, new_ckpt, new_ckpt_final)
+                    nb_success, nb_fail = show_result(x, cgd_data_new, ckpt_final, new_ckpt_final,
                                                       nb_success, nb_fail, FLAGS.tgt_lb)
                     if nb_success == 2:
                         logging.info('This data is really successful, go to next data!')
@@ -914,8 +1003,29 @@ def main(argv=None):  # pylint: disable=unused-argument
                                 str(FLAGS.water_power), 'number' + str(idx), str(i) + '_ori.png'))
                 deep_cnn.save_fig(cgd_data[i].astype(np.int32), img)
 
+
+
             # get new training data
-            train_data_new, cgd_data = tr_data_wm(train_data, train_labels, watermark, ckpt_final)
+            cgd_data = wm_cgd_data(watermark, cgd_data)
+
+            train_data_new = np.vstack((cgd_data, kpt_data_all))
+            train_labels_new = np.hstack((cgd_lbs, kpt_lbs_all))
+
+            np.random.seed(100)
+            np.random.shuffle(train_data_new)
+            np.random.seed(100)
+            np.random.shuffle(train_labels_new)
+
+            # cgd_count, kpt_count = 0, 0
+            # for i in train_data_new:
+            #     if (i == cgd_data[0]).all():
+            #         cgd_count += 1
+            #         logging.info('True, this train data is cgd {} / {}'.format(cgd_count, len(train_data_new)))
+            #     else:
+            #         kpt_count += 1
+            #         logging.info('False, this train data is kpt {} / {}'.format(kpt_count, len(train_data_new)))
+
+            # train_data_new, cgd_data = tr_data_wm(train_data, train_labels, watermark, ckpt_final)
 
             # save 10 watermark images
             for i in range(10):  # shift to int for save fig
@@ -937,7 +1047,7 @@ def main(argv=None):  # pylint: disable=unused-argument
                 new_ckpt_final = new_ckpt + '-' + str(FLAGS.max_steps - 1)
             logging.info('np.max(train_data) before new train: {}'.format(np.max(train_data)))
 
-            start_train(train_data_new, train_labels, test_data, test_labels, new_ckpt, new_ckpt_final)
+            start_train(train_data_new, train_labels_new, test_data, test_labels, new_ckpt, new_ckpt_final)
 
             nb_success, nb_fail = show_result(x, cgd_data, ckpt_final, new_ckpt_final,
                                               nb_success, nb_fail, FLAGS.tgt_lb)
