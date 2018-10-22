@@ -549,10 +549,10 @@ def gradients(x_ori, ckpt_final, number, grad_label, return_logits = True, new=T
 
     with tf.Session() as sess:
         saver.restore(sess, ckpt_final)  # restore model weights
-        #print('model is restored at: ', ckpt_final)
+        # print('model is restored at: ', ckpt_final)
 
         output_val = sess.run(output, feed_dict={x_placeholder:x})  # shape:(1, 10)
-        print('output_val.shape:',output_val.shape)
+        # print('output_val.shape:',output_val.shape)
         #assert output_val.shape == (1, 10)  # ensure output.shape is right
         #print('output_probilities on this model:',output_val[0])
         #print('output_predicted_labels on this model', np.argmax(output_val, axis=1))
@@ -565,14 +565,14 @@ def gradients(x_ori, ckpt_final, number, grad_label, return_logits = True, new=T
             grads = tf.gradients(output[:,t], x_placeholder)
 
             grads_value = sess.run(grads, feed_dict={x_placeholder:x})  # is a list: [list of (1, rows, cols, chns), dtype=float32]
-            print('type(grads_value)',type(grads_value))
+            #print('type(grads_value)',type(grads_value))
             #print('grads_value:\n',grads_value)
             #print('np.array(grads_value[0]).shape: ', np.array(grads_value[0]).shape)
             if np.array(grads_value[0]).shape[0] == 1:
-                print('compute gradients of just one image')
+                # print('compute gradients of just one image')
                 grads_mat = np.array(grads_value[0][0])  # shift from list to numpy, note grads_value[0].shape:(1, rows, cols, chns)
             else:
-                print('compute gradients of a batch of images', np.array(grads_value[0]).shape)
+                # print('compute gradients of a batch of images', np.array(grads_value[0]).shape)
                 grads_mat = np.array(grads_value[0])  # shift from list to numpy, note grads_value[0].shape:(1, rows, cols, chns)
                 #print('grads_mat[1]',grads_mat[1])
 
@@ -668,8 +668,9 @@ def softmax_preds(images_ori, ckpt_final, return_logits=False):
     if FLAGS.dataset == 'cifar10':
         images = (images - MEAN)/(STD + 1e-7)  # whitening imgs for training
     else:
-        images -= 127.5 
-
+        images -= 127.5
+    if len(images.shape) == 3:  # x.shape is (28, 28, 1) or (32, 32, 3)
+        images = np.expand_dims(images, axis=0)
     #print('start pred using %s. images.mean: %.2f' % (FLAGS.dataset, np.mean(images)))
         
     # Compute nb samples and deduce nb of batches
@@ -702,7 +703,7 @@ def softmax_preds(images_ori, ckpt_final, return_logits=False):
     with tf.Session() as sess:
         # Restore TF session from checkpoint file
         saver.restore(sess, ckpt_final)
-        print('model is restored at: ', ckpt_final,'\n')
+        # print('model is restored at: ', ckpt_final,'\n')
 
         # Parse data by batch
         for batch_nb in range(0, int(nb_batches+1)):
