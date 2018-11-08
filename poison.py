@@ -63,8 +63,8 @@ tf.flags.DEFINE_string('distance_file', './records/distances.csv', '../changed_d
 tf.flags.DEFINE_string('nns_idx_file', './records/nns_idx.csv', '../changed_data_label.txt')
 tf.flags.DEFINE_string('vnb_idx_path', './records/vnb_idx.csv', '../changed_data_label.txt')
 tf.flags.DEFINE_string('changed_data_label', './records/changed_data_label.txt', '../changed_data_label.txt')
-tf.flags.DEFINE_string('log_file', './log.log', 'the file path of log file')
-tf.flags.DEFINE_string('success_info', './success_information.txt', 'the file path of log file')
+tf.flags.DEFINE_string('log_file', './records/log.log', 'the file path of log file')
+tf.flags.DEFINE_string('success_info', './records/success_information.txt', 'the file path of log file')
 tf.flags.DEFINE_string('image_save_path', './image_save', 'save images')
 
 
@@ -863,7 +863,7 @@ def main(argv=None):  # pylint: disable=unused-argument
     if FLAGS.slt_stb_ts_x:
         logging.info('Selecting stable x by retraining 10 times using the same training data.')
         index = find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
-        logging.info('First 20 / {}index of stable x: \n{}'.format(len(index), index[:20]))
+        logging.info('First 20 / {} index of stable x: \n{}'.format(len(index), index[:20]))
     else:
         index = range(len(test_data))
         logging.info('Selecting x in all testing data, First 20 index: \n{}'.format(index[:20]))
@@ -888,7 +888,7 @@ def main(argv=None):  # pylint: disable=unused-argument
 
         # decide which target class
         if FLAGS.slt_lb:  # target class is changed.
-            FLAGS.tgt_lb = find_vnb_label(train_data, train_labels, x, test_labels[idx],ckpt_final)[0]
+            FLAGS.tgt_lb = find_vnb_label(train_data, train_labels, x, test_labels[idx], ckpt_final, idx=idx)[0]
         else:  # target_label do not need to be changed
             if test_labels[idx] == FLAGS.tgt_lb:
                 logging.info('The label of the data is already target label, pass!')
@@ -946,7 +946,7 @@ def main(argv=None):  # pylint: disable=unused-argument
                 nb_success, nb_fail = show_result(x, cgd_data_new, ckpt_final, new_ckpt_final,
                                                   nb_success, nb_fail, FLAGS.tgt_lb)
                 
-                with open('../success_infor.txt', 'a+') as f:
+                with open(FLAGS.success_infO, 'a+') as f:
                     f.write('data_idx_%d, iteration_%d' % (idx, itr))
                 if nb_success == 1:
                     logging.info('This data is successful first time, we need to retrain to entrue.')
