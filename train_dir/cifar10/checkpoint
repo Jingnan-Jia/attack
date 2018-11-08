@@ -1,0 +1,2 @@
+model_checkpoint_path: "3564model_itr_grads.ckpt-11999"
+all_model_checkpoint_paths: "3564model_itr_grads.ckpt-11999"
