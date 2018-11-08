@@ -30,10 +30,10 @@ tf.flags.DEFINE_integer('nb_labels', 10, 'Number of output classes')
 tf.flags.DEFINE_integer('max_steps', 12000, 'Number of training steps to run.')
 
 # directories path
-tf.flags.DEFINE_string('data_dir', '../data_dir', 'Temporary storage')
-tf.flags.DEFINE_string('train_dir', '../train_dir', 'Where model ckpt are saved')
-tf.flags.DEFINE_string('record_dir', '../records', 'Where record files are saved')
-tf.flags.DEFINE_string('image_dir', '../image_save', 'Where image files are saved')
+tf.flags.DEFINE_string('data_dir', './data_dir', 'Temporary storage')
+tf.flags.DEFINE_string('train_dir', './train_dir', 'Where model ckpt are saved')
+tf.flags.DEFINE_string('record_dir', './records', 'Where record files are saved')
+tf.flags.DEFINE_string('image_dir', './image_save', 'Where image files are saved')
 # different methods
 tf.flags.DEFINE_boolean('wm_x_fft', 0, 'directly add x')
 tf.flags.DEFINE_boolean('wm_x_grads', 0, 'watermark is gradients of x')
@@ -42,10 +42,10 @@ tf.flags.DEFINE_boolean('x_grads', 1, 'whether to iterate data using x gradients
 tf.flags.DEFINE_boolean('replace', 0, 'whether to replace part of cgd data')
 
 # select data
-tf.flags.DEFINE_boolean('slt_stb_x', 0, 'whether to select select_stable_x')
-tf.flags.DEFINE_boolean('slt_vnb_x', 0, 'whether to select specific x')
-tf.flags.DEFINE_boolean('slt_lb', 0, 'whether to select specific target label')
-tf.flags.DEFINE_boolean('nns', 0, 'whether to choose near neighbors as changed data')
+tf.flags.DEFINE_boolean('slt_stb_ts_x', 1, 'whether to select select_stable_x')
+tf.flags.DEFINE_boolean('slt_vnb_tr_x', 1, 'whether to select specific x')
+tf.flags.DEFINE_boolean('slt_lb', 1, 'whether to select specific target label')
+tf.flags.DEFINE_boolean('nns', 1, 'whether to choose near neighbors as changed data')
 
 # some parameters
 tf.flags.DEFINE_float('epsilon', 0.001, 'watermark_power')
@@ -55,17 +55,17 @@ tf.flags.DEFINE_float('changed_area', '0.1', '')
 tf.flags.DEFINE_integer('tgt_lb', 4, 'Target class')
 
 # file path
-tf.flags.DEFINE_string('P_per_class', '../records/precision_per_class.txt', '../precision_per_class.txt')
-tf.flags.DEFINE_string('P_all_classes', '../records/precision_all_class.txt', '../precision_all_class.txt')
-tf.flags.DEFINE_string('other_preds', '../records/other_data_preds.csv', '../changed_data_label.txt')
-tf.flags.DEFINE_string('other_prd_lbs', '../records/other_data_predicted_lbs.csv', ' ')
-tf.flags.DEFINE_string('distance_file', '../records/distances.csv', '../changed_data_label.txt')
-tf.flags.DEFINE_string('nns_idx_file', '../records/nns_idx.csv', '../changed_data_label.txt')
-tf.flags.DEFINE_string('vnb_idx_path', '../records/vnb_idx.csv', '../changed_data_label.txt')
-tf.flags.DEFINE_string('changed_data_label', '../records/changed_data_label.txt', '../changed_data_label.txt')
-tf.flags.DEFINE_string('log_file', '../log.log', 'the file path of log file')
-tf.flags.DEFINE_string('success_info', '../success_information.txt', 'the file path of log file')
-tf.flags.DEFINE_string('image_save_path', '../image_save', 'save images')
+tf.flags.DEFINE_string('P_per_class', './records/precision_per_class.txt', '../precision_per_class.txt')
+tf.flags.DEFINE_string('P_all_classes', './records/precision_all_class.txt', '../precision_all_class.txt')
+tf.flags.DEFINE_string('other_preds', './records/other_data_preds.csv', '../changed_data_label.txt')
+tf.flags.DEFINE_string('other_prd_lbs', './records/other_data_predicted_lbs.csv', ' ')
+tf.flags.DEFINE_string('distance_file', './records/distances.csv', '../changed_data_label.txt')
+tf.flags.DEFINE_string('nns_idx_file', './records/nns_idx.csv', '../changed_data_label.txt')
+tf.flags.DEFINE_string('vnb_idx_path', './records/vnb_idx.csv', '../changed_data_label.txt')
+tf.flags.DEFINE_string('changed_data_label', './records/changed_data_label.txt', '../changed_data_label.txt')
+tf.flags.DEFINE_string('log_file', './log.log', 'the file path of log file')
+tf.flags.DEFINE_string('success_info', './success_information.txt', 'the file path of log file')
+tf.flags.DEFINE_string('image_save_path', './image_save', 'save images')
 
 
 FLAGS = tf.flags.FLAGS
@@ -127,8 +127,9 @@ def preds_per_class(preds, labels, ppc_file_path, pac_file_path):  # 打印每�
     return ppc_test
 
 
-def start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final):  #
-    assert deep_cnn.train(train_data, train_labels, ckpt)
+def start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final, only_rpt=False):  #
+    if not only_rpt:
+        assert deep_cnn.train(train_data, train_labels, ckpt)
 
     preds_tr = deep_cnn.softmax_preds(train_data, ckpt_final)  # 得到概率向量
     preds_ts = deep_cnn.softmax_preds(test_data, ckpt_final)
@@ -726,7 +727,7 @@ def find_vnb_label(train_data, train_labels, x, x_label, ckpt_final, saved_nb=10
         times: frequency of target class accurs
 
     """
-    logging.info('Start find vulnerable label for idx:{} of train data'.format(idx))
+    logging.info('Start find vulnerable label for idx:{} of test data'.format(idx))
     train_data_cp = copy.deepcopy(train_data)
 
     changed_index = []
@@ -768,7 +769,7 @@ def find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt
     else:
         logging.info(stb_idx_file + "does not exist! Index of stable x will be generated by retraing data 10 times...")
         acc_bin = np.ones((10, len(test_labels)))
-        for i in range(10):
+        for i in range(3):
             logging.info('retraining model {}/10'.format(i))
             start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
             preds_ts = deep_cnn.softmax_preds(test_data, ckpt_final)
@@ -779,13 +780,13 @@ def find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt
         stable_bin = np.min(acc_bin, axis=0)
         np.savetxt(stb_bin_file, stable_bin)
 
-        logging.info('all labels of x have been saved at {}/stable_idx_new.txt'.format(FLAGS.data_dir))
+        logging.info('all labels of test x have been saved at {}/stable_idx_new.txt'.format(FLAGS.data_dir))
 
         stable_idx = np.argwhere(stable_bin > 0)
         stable_idx = np.reshape(stable_idx, (len(stable_idx),))
 
         np.savetxt(stb_idx_file, stable_idx)
-        logging.info('Index of stable x have been saved at {}'.format(stb_idx_file))
+        logging.info('Index of stable test x have been saved at {}'.format(stb_idx_file))
 
     return stable_idx
 
@@ -804,10 +805,11 @@ def find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt_f
     """
     logging.info('Start select the vulnerable x')
     if os.path.exists(FLAGS.vnb_idx_path):
-        vnb_idx = np.loadtxt(open(FLAGS.vnb_idx_path, "r"), delimiter=",", skiprows=1)
+        vnb_idx_all = np.loadtxt(open(FLAGS.vnb_idx_path, "r"), delimiter=",", skiprows=1)
 
-        vnb_idx = vnb_idx.astype(np.int32)
+        vnb_idx = vnb_idx_all[:,0].astype(np.int32)
         logging.info(FLAGS.vnb_idx_path + " already exist! Index of vulnerable x have been restored from this file.")
+        logging.info('The vulnerable index is: {}'.format(vnb_idx[:20]))
 
     else:
         logging.warn(FLAGS.vnb_idx_path + " does not exist! Index of vulnerable x is generated for a long time ...")
@@ -840,7 +842,8 @@ def main(argv=None):  # pylint: disable=unused-argument
 
     # create dir used in this project
     dir_list = [FLAGS.data_dir, FLAGS.train_dir, FLAGS.image_dir, FLAGS.record_dir, ckpt_dir]
-    map(input_.create_dir_if_needed, dir_list)
+    for i in dir_list:
+        input_.create_dir_if_needed(i)
 
     ckpt = ckpt_dir + 'model.ckpt'
     ckpt_final = ckpt + '-' + str(FLAGS.max_steps - 1)
@@ -849,14 +852,15 @@ def main(argv=None):  # pylint: disable=unused-argument
 
     train_data, train_labels, test_data, test_labels = my_load_dataset(FLAGS.dataset)
 
-    first = 1  # 数据没水印之前，要训练一下。然后存一下。知道正确率。（只用训练一次）
+    first = 0  # 数据没水印之前，要训练一下。然后存一下。知道正确率。（只用训练一次）
     if first:
         logging.info('Start train original model')
-        train_tuple = start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
+        start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
     else:
+        start_train(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final, only_rpt=True)
         logging.info('Original model will be restored from ' + ckpt_final)
 
-    if FLAGS.slt_stb_x:
+    if FLAGS.slt_stb_ts_x:
         logging.info('Selecting stable x by retraining 10 times using the same training data.')
         index = find_stable_idx(train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
         logging.info('First 20 / {}index of stable x: \n{}'.format(len(index), index[:20]))
@@ -865,8 +869,8 @@ def main(argv=None):  # pylint: disable=unused-argument
         logging.info('Selecting x in all testing data, First 20 index: \n{}'.format(index[:20]))
 
     # decide which index
-    if FLAGS.slt_vnb_x:
-        index = find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt, ckpt_final)
+    if FLAGS.slt_vnb_tr_x:
+        index = find_vnb_idx(index, train_data, train_labels, test_data, test_labels, ckpt_final)
     nb_success, nb_fail = 0, 0
     for idx in index:
 
